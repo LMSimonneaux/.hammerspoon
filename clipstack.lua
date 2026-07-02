@@ -216,6 +216,43 @@ M._ = {
 }
 
 -------------------------------------------------------------------------------
+-- Capture (watcher)
+
+local function onPasteboardChange()
+  -- Garde anti-boucle : ignore nos propres écritures (voir Task 3 / collage).
+  if ignoreNext then ignoreNext = false; return end
+
+  -- Filtre sécurité : jamais les contenus sensibles.
+  if isSensitive(hs.pasteboard.pasteboardTypes()) then return end
+
+  -- Texte prioritaire.
+  local txt = hs.pasteboard.readString()
+  if txt and txt:match("%S") then
+    if #txt > MAX_TEXT then return end -- garde-fou taille
+    addItem({ kind = "text", text = txt, preview = previewOf(txt) })
+    return
+  end
+
+  -- Sinon image.
+  local img = hs.pasteboard.readImage()
+  if img then
+    counter = counter + 1
+    local fname = string.format("img-%06d.png", counter)
+    local fpath = DIR .. "/" .. fname
+    if not img:saveToFile(fpath) then
+      logMsg("saveToFile échoué: " .. fname)
+      return
+    end
+    addItem({ kind = "image", file = fname, key = imageKey(fpath), preview = "🖼️ image" })
+  end
+  -- Ni texte ni image (ex. fichiers Finder) : ignoré (hors scope).
+end
+
+local pbWatcher = hs.pasteboard.watcher.new(onPasteboardChange)
+pbWatcher:start()
+M._watcher = pbWatcher -- conserve la référence (évite le GC du watcher)
+
+-------------------------------------------------------------------------------
 -- Initialisation
 
 ensureDir()
