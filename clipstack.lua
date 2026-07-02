@@ -253,6 +253,86 @@ pbWatcher:start()
 M._watcher = pbWatcher -- conserve la référence (évite le GC du watcher)
 
 -------------------------------------------------------------------------------
+-- Popup (chooser) + collage
+
+local function relTime(ts)
+  local d = hs.timer.secondsSinceEpoch() - (ts or 0)
+  if d < 60 then return "à l'instant"
+  elseif d < 3600 then return string.format("il y a %d min", math.floor(d / 60))
+  elseif d < 86400 then return string.format("il y a %d h", math.floor(d / 3600))
+  else return string.format("il y a %d j", math.floor(d / 86400)) end
+end
+
+-- Construit les lignes du chooser depuis la pile (appelée à chaque ouverture/refresh).
+local function buildChoices()
+  local out = {}
+  for _, it in ipairs(stack) do
+    local choice = {
+      text    = it.preview or "(vide)",
+      subText = (it.kind == "image" and "Image" or "Texte") .. " · " .. relTime(it.ts),
+      _item   = it, -- référence stable de l'item (résiste aux réordonnancements)
+    }
+    if it.kind == "image" and it.file then
+      local img = hs.image.imageFromPath(DIR .. "/" .. it.file)
+      if img then choice.image = img end
+    end
+    out[#out + 1] = choice
+  end
+  return out
+end
+
+local function deleteItem(it)
+  for i, x in ipairs(stack) do
+    if x == it then
+      table.remove(stack, i)
+      if it.file then os.remove(DIR .. "/" .. it.file) end
+      save()
+      break
+    end
+  end
+end
+
+-- Met l'item dans le presse-papier, le remonte en tête, puis colle (⌘V) dans l'app active.
+local function pasteItem(it)
+  ignoreNext = true -- notre écriture ne doit pas être re-capturée
+  if it.kind == "image" and it.file then
+    local img = hs.image.imageFromPath(DIR .. "/" .. it.file)
+    if img then hs.pasteboard.writeObjects(img) else ignoreNext = false; return end
+  else
+    hs.pasteboard.setContents(it.text or "")
+  end
+  addItem(it) -- remonte l'item en tête (même référence → dédup l'attrape)
+  hs.timer.doAfter(PASTE_DELAY, function()
+    hs.eventtap.keyStroke({ "cmd" }, "v")
+  end)
+end
+
+local function onChoice(choice)
+  if not choice or not choice._item then return end -- Échap / clic dans le vide
+  pasteItem(choice._item)
+end
+
+local chooser = hs.chooser.new(onChoice)
+chooser:choices(buildChoices)
+chooser:rightClickCallback(function(row)
+  if not row or row < 1 then return end
+  local c = chooser:selectedRowContents(row)
+  if c and c._item then
+    deleteItem(c._item)
+    chooser:refreshChoicesCallback(true) -- true = ré-applique la requête de recherche courante
+  end
+end)
+
+function M.toggle()
+  if chooser:isVisible() then chooser:hide(); return end
+  chooser:query("")
+  chooser:refreshChoicesCallback()
+  chooser:show()
+end
+
+hs.hotkey.bind(HOTKEY_MODS, HOTKEY_KEY, M.toggle)
+
+-------------------------------------------------------------------------------
 -- Initialisation
 
 ensureDir()
