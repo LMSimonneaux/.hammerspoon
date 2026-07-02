@@ -295,12 +295,16 @@ end
 -- Met l'item dans le presse-papier, le remonte en tête, puis colle (⌘V) dans l'app active.
 local function pasteItem(it)
   ignoreNext = true -- notre écriture ne doit pas être re-capturée
+  local ok
   if it.kind == "image" and it.file then
     local img = hs.image.imageFromPath(DIR .. "/" .. it.file)
-    if img then hs.pasteboard.writeObjects(img) else ignoreNext = false; return end
+    ok = img and hs.pasteboard.writeObjects(img)
   else
-    hs.pasteboard.setContents(it.text or "")
+    ok = hs.pasteboard.setContents(it.text or "")
   end
+  -- Écriture ratée (image introuvable ou write refusé) : on relâche le flag pour ne pas
+  -- avaler la prochaine vraie copie, et on abandonne (ni remontée, ni ⌘V).
+  if not ok then ignoreNext = false; return end
   addItem(it) -- remonte l'item en tête (même référence → dédup l'attrape)
   hs.timer.doAfter(PASTE_DELAY, function()
     hs.eventtap.keyStroke({ "cmd" }, "v")
