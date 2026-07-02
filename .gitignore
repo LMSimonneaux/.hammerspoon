@@ -1,0 +1,12 @@
+# Données runtime du presse-papier — SENSIBLE, ne jamais versionner
+clipstack/
+
+# Logs runtime
+setup.log
+*.log
+
+# Backups horodatés
+*.bak.*
+
+# macOS
+.DS_Store
