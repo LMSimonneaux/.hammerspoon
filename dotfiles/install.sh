@@ -12,20 +12,24 @@ ZSH_DIR="$HOME/.oh-my-zsh"
 ZSH_CUSTOM="${ZSH_CUSTOM:-$ZSH_DIR/custom}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
-backup() {  # backup <path> — déplace un fichier/lien existant (non-symlink vers nous)
+# backup <path> — met de côté tout existant (fichier OU symlink), ne supprime JAMAIS rien.
+backup() {
   local target="$1"
-  if [ -e "$target" ] && [ ! -L "$target" ]; then
+  if [ -e "$target" ] || [ -L "$target" ]; then
     mv "$target" "$target.backup.$STAMP"
     echo "  ↳ sauvegardé : $target.backup.$STAMP"
-  elif [ -L "$target" ]; then
-    rm "$target"
   fi
 }
 
-link() {  # link <src> <dest>
-  backup "$2"
-  ln -s "$1" "$2"
-  echo "  → $2  ⇒  $1"
+link() {  # link <src> <dest> — idempotent : déjà lié vers nous → no-op
+  local src="$1" dest="$2"
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$src" ]; then
+    echo "  = $dest déjà en place"
+    return
+  fi
+  backup "$dest"
+  ln -s "$src" "$dest"
+  echo "  → $dest  ⇒  $src"
 }
 
 echo "== 1. Oh My Zsh =="
