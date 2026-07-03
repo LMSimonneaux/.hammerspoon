@@ -1,0 +1,139 @@
+<!-- clipstack-panel.html — client du panneau ClipStack (chargé par hs.webview). -->
+<meta charset="utf-8">
+<style>
+  :root{
+    --bg:#14191e; --fg:#cbd3cb; --dim:#5c6a5c; --green:#00c200;
+    --sel:rgba(0,194,0,.09); --line:rgba(255,255,255,.04); --edge:rgba(255,255,255,.10);
+    --mono:"Andale Mono","AndaleMono",Monaco,ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:transparent;font-family:var(--mono);font-size:13px;color:var(--fg);
+       -webkit-font-smoothing:antialiased;overflow:hidden}
+  #panel{height:100vh;display:flex;flex-direction:column;background:var(--bg);
+         border:1px solid var(--edge);box-shadow:0 18px 50px -18px rgba(0,0,0,.75)}
+  #head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;
+        border-bottom:1px solid rgba(255,255,255,.07);flex:none}
+  #title{letter-spacing:.16em;text-transform:uppercase;font-size:10.5px;color:var(--green)}
+  #count{font-size:11px;font-variant-numeric:tabular-nums;color:var(--green)}
+  #count .u{color:var(--dim)}
+  #searchbar{display:flex;align-items:center;gap:8px;padding:10px 14px;
+             border-bottom:1px solid rgba(255,255,255,.07);flex:none}
+  #prompt{color:var(--green);font-weight:700}
+  #qwrap{position:relative;flex:1;display:flex;align-items:center;height:16px}
+  #q{flex:1;background:transparent;border:0;outline:0;color:var(--fg);font:inherit;padding:0;caret-color:transparent}
+  #caret{position:absolute;left:0;top:50%;transform:translateY(-50%);width:1ch;height:15px;
+         background:var(--green);pointer-events:none}
+  @media (prefers-reduced-motion: no-preference){ #caret{animation:blink 1.1s steps(1) infinite} }
+  @keyframes blink{50%{opacity:0}}
+  #list{flex:1;overflow-y:auto}
+  #list::-webkit-scrollbar{width:8px}
+  #list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12)}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 14px;
+       border-bottom:1px solid var(--line);cursor:default}
+  .row:last-child{border-bottom:0}
+  .kbd{font-size:10.5px;width:20px;flex:none;opacity:.45;font-variant-numeric:tabular-nums}
+  .thumb{flex:none;width:22px;height:22px;object-fit:cover;background:#223022;
+         border:1px solid rgba(0,194,0,.35)}
+  .ptext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .meta{flex:none;font-size:11px;font-variant-numeric:tabular-nums;color:var(--dim)}
+  .row.sel{background:var(--sel)}
+  .row.sel .kbd{color:var(--green);opacity:1}
+  .row.sel .meta{color:var(--green)}
+  .empty{padding:20px 14px;color:var(--dim);text-align:center}
+</style>
+
+<div id="panel">
+  <div id="head"><span id="title">ClipStack</span><span id="count"></span></div>
+  <div id="searchbar">
+    <span id="prompt">❯</span>
+    <span id="qwrap"><input id="q" type="text" autocomplete="off" spellcheck="false"><span id="caret"></span></span>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+const CS = (() => {
+  let all = [], view = [], sel = 0;
+  const $ = id => document.getElementById(id);
+  const norm = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+  function post(action, i){
+    const h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.clipstack;
+    if (h) h.postMessage({ action, i: (i === undefined ? null : i) });
+    else console.log("post", action, i);
+  }
+  function render(items){
+    all = items || [];
+    $("count").innerHTML = all.length + '<span class="u"> éléments</span>';
+    applyFilter();
+  }
+  function applyFilter(){
+    const q = norm($("q").value);
+    view = q ? all.filter(it => norm(it.preview).includes(q)) : all.slice();
+    sel = 0; draw();
+  }
+  function draw(){
+    const list = $("list"); list.textContent = "";
+    if (!view.length){
+      const d = document.createElement("div"); d.className = "empty"; d.textContent = "(vide)";
+      list.appendChild(d); return;
+    }
+    view.forEach((it, idx) => {
+      const row = document.createElement("div");
+      row.className = "row" + (idx === sel ? " sel" : "");
+      const kbd = document.createElement("span"); kbd.className = "kbd";
+      kbd.textContent = idx < 9 ? ("⌘" + (idx + 1)) : ""; row.appendChild(kbd);
+      if (it.kind === "image" && it.thumb){
+        const im = document.createElement("img"); im.className = "thumb"; im.src = it.thumb; row.appendChild(im);
+      } else if (it.kind === "image"){
+        const sp = document.createElement("span"); sp.className = "thumb"; row.appendChild(sp);
+      }
+      const t = document.createElement("span"); t.className = "ptext";
+      t.textContent = it.preview || "(vide)"; row.appendChild(t);
+      const m = document.createElement("span"); m.className = "meta";
+      m.textContent = it.meta || ""; row.appendChild(m);
+      row.addEventListener("click", () => post("paste", it.i));
+      row.addEventListener("contextmenu", e => { e.preventDefault(); post("delete", it.i); });
+      list.appendChild(row);
+    });
+    const cur = list.children[sel];
+    if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: "nearest" });
+  }
+  function move(d){ if (!view.length) return; sel = (sel + d + view.length) % view.length; draw(); }
+
+  const caret = $("caret");
+  function updateCaret(){ caret.style.left = ($("q").selectionStart || 0) + "ch"; }
+  $("q").addEventListener("input", () => { applyFilter(); updateCaret(); });
+  $("q").addEventListener("keyup", updateCaret);
+  $("q").addEventListener("click", updateCaret);
+  document.addEventListener("keydown", e => {
+    if (e.metaKey && /^Digit[1-9]$/.test(e.code)){
+      const n = +e.code.slice(5) - 1; if (view[n]) post("paste", view[n].i); e.preventDefault(); return;
+    }
+    if (e.metaKey && e.key === "Backspace"){
+      if (view[sel]) post("delete", view[sel].i); e.preventDefault(); return;
+    }
+    if (e.key === "ArrowDown"){ move(1); e.preventDefault(); }
+    else if (e.key === "ArrowUp"){ move(-1); e.preventDefault(); }
+    else if (e.key === "Enter"){ if (view[sel]) post("paste", view[sel].i); e.preventDefault(); }
+    else if (e.key === "Escape"){ post("close"); e.preventDefault(); }
+  });
+
+  function focus(){ const q = $("q"); q.value = ""; q.focus(); applyFilter(); updateCaret(); }
+  return { render, focus };
+})();
+window.CS = CS;
+
+// Bootstrap démo : hors webview (navigateur), injecter des données d'exemple pour voir le rendu.
+if (!(window.webkit && window.webkit.messageHandlers)) {
+  CS.render([
+    { i:1, kind:"text",  preview:"https://github.com/LMSimonneaux/.hammerspoon", meta:"44" },
+    { i:2, kind:"text",  preview:"ce n'est pas que les builds de PR ne se déclenchent pas — c'est que le Worker…", meta:"283" },
+    { i:3, kind:"image", preview:"capture", meta:"1284 × 863" },
+    { i:4, kind:"text",  preview:"prenom.nom@exemple.fr", meta:"26" },
+    { i:5, kind:"text",  preview:'const useCtrl = it.kind == "image"', meta:"34" }
+  ]);
+  CS.focus();
+}
+</script>
