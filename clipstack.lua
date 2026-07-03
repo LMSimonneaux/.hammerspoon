@@ -292,7 +292,23 @@ local function deleteItem(it)
   end
 end
 
--- Met l'item dans le presse-papier, le remonte en tête, puis colle (⌘V) dans l'app active.
+-- Bundle IDs de terminaux : Claude CLI y ingère les IMAGES via ⌃V (⌘V = collage texte du
+-- terminal, ignoré par l'ingestion image). Ajoute d'autres terminaux ici si besoin.
+local TERMINALS = {
+  ["com.googlecode.iterm2"]  = true,
+  ["com.apple.Terminal"]     = true,
+  ["com.mitchellh.ghostty"]  = true,
+  ["net.kovidgoyal.kitty"]   = true,
+  ["io.alacritty"]           = true,
+  ["com.github.wez.wezterm"] = true,
+  ["dev.warp.Warp-Stable"]   = true,
+}
+
+-- App de devant capturée à l'OUVERTURE de la palette : c'est la cible du collage, et elle
+-- détermine le raccourci (⌘V partout, sauf image dans un terminal → ⌃V pour Claude CLI).
+local targetBundle = nil
+
+-- Met l'item dans le presse-papier, le remonte en tête, puis colle dans l'app active.
 local function pasteItem(it)
   ignoreNext = true -- notre écriture ne doit pas être re-capturée
   local ok
@@ -303,11 +319,14 @@ local function pasteItem(it)
     ok = hs.pasteboard.setContents(it.text or "")
   end
   -- Écriture ratée (image introuvable ou write refusé) : on relâche le flag pour ne pas
-  -- avaler la prochaine vraie copie, et on abandonne (ni remontée, ni ⌘V).
+  -- avaler la prochaine vraie copie, et on abandonne (ni remontée, ni collage).
   if not ok then ignoreNext = false; return end
   addItem(it) -- remonte l'item en tête (même référence → dédup l'attrape)
+  -- Image dans un terminal (Claude CLI) → ⌃V ; sinon ⌘V (texte partout, images apps natives).
+  local useCtrl = it.kind == "image" and targetBundle and TERMINALS[targetBundle]
   hs.timer.doAfter(PASTE_DELAY, function()
-    hs.eventtap.keyStroke({ "cmd" }, "v")
+    if useCtrl then hs.eventtap.keyStroke({ "ctrl" }, "v")
+    else hs.eventtap.keyStroke({ "cmd" }, "v") end
   end)
 end
 
@@ -327,8 +346,34 @@ chooser:rightClickCallback(function(row)
   end
 end)
 
+-- Sélection par ⌘1-⌘9 : le panneau est non-activant, donc les ⌘+chiffre natifs partent à
+-- l'app de devant (ex. onglets iTerm). On les capte nous-mêmes tant que la palette est ouverte.
+-- Keycodes PHYSIQUES de la rangée 1..9 (identiques quel que soit le layout, AZERTY inclus —
+-- on ne passe pas par hs.keycodes.map qui dépend du keymap actif et échoue en AZERTY).
+local DIGIT_KEYCODE = { [18] = 1, [19] = 2, [20] = 3, [21] = 4, [23] = 5, [22] = 6, [26] = 7, [28] = 8, [25] = 9 }
+
+local digitTap = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(e)
+  local f = e:getFlags()
+  -- ⌘ requis, mais on tolère Shift (sur AZERTY le chiffre peut l'impliquer). Pas ctrl/alt.
+  if not f.cmd or f.ctrl or f.alt then return false end
+  local n = DIGIT_KEYCODE[e:getKeyCode()]
+  if not n then return false end
+  local ok, c = pcall(function() return chooser:selectedRowContents(n) end)
+  if ok and c and c._item then
+    chooser:hide()
+    pasteItem(c._item)
+  end
+  return true -- consomme ⌘chiffre (empêche le changement d'onglet iTerm)
+end)
+
+-- Le tap n'est actif QUE pendant que la palette est ouverte.
+chooser:showCallback(function() digitTap:start() end)
+chooser:hideCallback(function() digitTap:stop() end)
+
 function M.toggle()
   if chooser:isVisible() then chooser:hide(); return end
+  local fa = hs.application.frontmostApplication()
+  targetBundle = fa and fa:bundleID() or nil -- cible du collage (détermine ⌘V vs ⌃V)
   chooser:query("")
   chooser:refreshChoicesCallback()
   chooser:show()
