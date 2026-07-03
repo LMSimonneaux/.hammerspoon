@@ -35,6 +35,8 @@ local stack      = {}    -- pile : index 1 = sommet (le plus récent)
 local counter    = 0     -- compteur monotone pour nommer les fichiers image
 local ignoreNext = false -- garde anti-boucle : ignore la prochaine capture (nos propres écritures)
 local saveTimer  = nil
+local panel      = nil   -- le webview du panneau (créé plus bas)
+local outsideTap = nil   -- eventtap "clic en dehors" (actif quand le panneau est ouvert)
 
 -------------------------------------------------------------------------------
 -- Log discret (n'interrompt jamais)
@@ -254,33 +256,9 @@ pbWatcher:start()
 M._watcher = pbWatcher -- conserve la référence (évite le GC du watcher)
 
 -------------------------------------------------------------------------------
--- Popup (chooser) + collage
+-- Panneau (hs.webview) + collage
 
-local function relTime(ts)
-  local d = hs.timer.secondsSinceEpoch() - (ts or 0)
-  if d < 60 then return "à l'instant"
-  elseif d < 3600 then return string.format("il y a %d min", math.floor(d / 60))
-  elseif d < 86400 then return string.format("il y a %d h", math.floor(d / 3600))
-  else return string.format("il y a %d j", math.floor(d / 86400)) end
-end
-
--- Construit les lignes du chooser depuis la pile (appelée à chaque ouverture/refresh).
-local function buildChoices()
-  local out = {}
-  for _, it in ipairs(stack) do
-    local choice = {
-      text    = it.preview or "(vide)",
-      subText = (it.kind == "image" and "Image" or "Texte") .. " · " .. relTime(it.ts),
-      _item   = it, -- référence stable de l'item (résiste aux réordonnancements)
-    }
-    if it.kind == "image" and it.file then
-      local img = hs.image.imageFromPath(DIR .. "/" .. it.file)
-      if img then choice.image = img end
-    end
-    out[#out + 1] = choice
-  end
-  return out
-end
+local PANEL_FILE = os.getenv("HOME") .. "/.hammerspoon/clipstack-panel.html"
 
 local function deleteItem(it)
   for i, x in ipairs(stack) do
@@ -305,8 +283,9 @@ local TERMINALS = {
   ["dev.warp.Warp-Stable"]   = true,
 }
 
--- App de devant capturée à l'OUVERTURE de la palette : c'est la cible du collage, et elle
+-- App de devant capturée à l'OUVERTURE du panneau : c'est la cible du collage, et elle
 -- détermine le raccourci (⌘V partout, sauf image dans un terminal → ⌃V pour Claude CLI).
+local targetApp    = nil
 local targetBundle = nil
 
 -- Met l'item dans le presse-papier, le remonte en tête, puis colle dans l'app active.
@@ -331,53 +310,107 @@ local function pasteItem(it)
   end)
 end
 
-local function onChoice(choice)
-  if not choice or not choice._item then return end -- Échap / clic dans le vide
-  pasteItem(choice._item)
+-- Dimensions PIXEL d'un PNG (lit l'en-tête IHDR : largeur/hauteur en big-endian).
+local function pngDims(path)
+  local f = io.open(path, "rb"); if not f then return nil end
+  f:seek("set", 16); local b = f:read(8); f:close()
+  if not b or #b < 8 then return nil end
+  local function u32(s) return s:byte(1) * 16777216 + s:byte(2) * 65536 + s:byte(3) * 256 + s:byte(4) end
+  return u32(b:sub(1, 4)), u32(b:sub(5, 8))
 end
 
-local chooser = hs.chooser.new(onChoice)
-chooser:choices(buildChoices)
-chooser:rightClickCallback(function(row)
-  if not row or row < 1 then return end
-  local c = chooser:selectedRowContents(row)
-  if c and c._item then
-    deleteItem(c._item)
-    chooser:refreshChoicesCallback(true) -- true = ré-applique la requête de recherche courante
+-- Construit le tableau d'items pour le JS (index stable = position dans stack).
+local function itemsForJS()
+  local out = {}
+  for idx, it in ipairs(stack) do
+    local e = { i = idx, kind = it.kind, preview = it.preview or "(vide)" }
+    if it.kind == "image" and it.file then
+      local w, h = pngDims(DIR .. "/" .. it.file)
+      e.meta = (w and h) and string.format("%d × %d", w, h) or "image"
+      local ok, uri = pcall(function()
+        local img = hs.image.imageFromPath(DIR .. "/" .. it.file)
+        return img and img:setSize({ w = 44, h = 44 }):encodeAsURLString() -- PNG par défaut
+      end)
+      if ok and uri then e.thumb = uri end
+    else
+      e.meta = tostring(utf8.len(it.text or "") or #(it.text or ""))
+    end
+    out[idx] = e
   end
-end)
+  return out
+end
 
--- Sélection par ⌘1-⌘9 : le panneau est non-activant, donc les ⌘+chiffre natifs partent à
--- l'app de devant (ex. onglets iTerm). On les capte nous-mêmes tant que la palette est ouverte.
--- Keycodes PHYSIQUES de la rangée 1..9 (identiques quel que soit le layout, AZERTY inclus —
--- on ne passe pas par hs.keycodes.map qui dépend du keymap actif et échoue en AZERTY).
-local DIGIT_KEYCODE = { [18] = 1, [19] = 2, [20] = 3, [21] = 4, [23] = 5, [22] = 6, [26] = 7, [28] = 8, [25] = 9 }
+-- Injecte la liste courante dans le panneau.
+local function renderPanel()
+  local ok, json = pcall(hs.json.encode, itemsForJS())
+  if not ok then logMsg("encode items échoué: " .. tostring(json)); return end
+  panel:evaluateJavaScript("CS.render(" .. json .. ")")
+end
 
-local digitTap = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(e)
-  local f = e:getFlags()
-  -- ⌘ requis, mais on tolère Shift (sur AZERTY le chiffre peut l'impliquer). Pas ctrl/alt.
-  if not f.cmd or f.ctrl or f.alt then return false end
-  local n = DIGIT_KEYCODE[e:getKeyCode()]
-  if not n then return false end
-  local ok, c = pcall(function() return chooser:selectedRowContents(n) end)
-  if ok and c and c._item then
-    chooser:hide()
-    pasteItem(c._item)
+-- Pont retour JS -> Lua : actions du panneau.
+local function onMessage(msg)
+  local body = msg and msg.body or {}
+  local action, i = body.action, body.i
+  if action == "close" then
+    panel:hide(); outsideTap:stop()
+  elseif action == "paste" then
+    local it = i and stack[i]
+    panel:hide(); outsideTap:stop()
+    if it then
+      if targetApp then targetApp:activate() end
+      pasteItem(it)
+    end
+  elseif action == "delete" then
+    local it = i and stack[i]
+    if it then deleteItem(it); renderPanel() end -- rafraîchit sans fermer
   end
-  return true -- consomme ⌘chiffre (empêche le changement d'onglet iTerm)
-end)
+end
 
--- Le tap n'est actif QUE pendant que la palette est ouverte.
-chooser:showCallback(function() digitTap:start() end)
-chooser:hideCallback(function() digitTap:stop() end)
+-- Création du webview (une fois).
+local usercontent = hs.webview.usercontent.new("clipstack")
+usercontent:setCallback(onMessage)
+
+local PANEL_HTML = ""
+do
+  local f = io.open(PANEL_FILE, "r")
+  if f then PANEL_HTML = f:read("*a"); f:close() else logMsg("clipstack-panel.html introuvable") end
+end
+
+local PANEL_W, PANEL_H = 620, 460
+panel = hs.webview.new({ x = 0, y = 0, w = PANEL_W, h = PANEL_H }, { developerExtrasEnabled = false }, usercontent)
+-- Panneau non-activant : il ne vole pas l'app active et peut donc s'afficher
+-- PAR-DESSUS un Space plein écran (Claude CLI dans iTerm fullscreen), comme Maccy/Paste.
+panel:windowStyle({ "borderless", "nonactivating" })
+panel:level(hs.drawing.windowLevels.modalPanel)
+panel:allowTextEntry(true)
+panel:closeOnEscape(true)
+panel:transparent(true)
+panel:deleteOnClose(false)
+panel:html(PANEL_HTML)
+-- Rejoint tous les Spaces (dont ceux en plein écran d'une autre app).
+panel:behaviorAsLabels({ "canJoinAllSpaces", "fullScreenAuxiliary" })
+M._panel = panel -- garde la référence en vie
+
+-- Ferme le panneau si on clique en dehors de son cadre.
+outsideTap = hs.eventtap.new({ hs.eventtap.event.types.leftMouseDown }, function(e)
+  if not panel:isVisible() then return false end
+  local p = hs.mouse.absolutePosition()
+  local fr = panel:frame()
+  local inside = p.x >= fr.x and p.x <= fr.x + fr.w and p.y >= fr.y and p.y <= fr.y + fr.h
+  if not inside then panel:hide(); outsideTap:stop() end
+  return false -- ne consomme pas le clic
+end)
 
 function M.toggle()
-  if chooser:isVisible() then chooser:hide(); return end
-  local fa = hs.application.frontmostApplication()
-  targetBundle = fa and fa:bundleID() or nil -- cible du collage (détermine ⌘V vs ⌃V)
-  chooser:query("")
-  chooser:refreshChoicesCallback()
-  chooser:show()
+  if panel:isVisible() then panel:hide(); outsideTap:stop(); return end
+  targetApp = hs.application.frontmostApplication()
+  targetBundle = targetApp and targetApp:bundleID() or nil
+  local sf = hs.screen.mainScreen():frame()
+  panel:frame({ x = sf.x + (sf.w - PANEL_W) / 2, y = sf.y + (sf.h - PANEL_H) / 3, w = PANEL_W, h = PANEL_H })
+  renderPanel()
+  panel:show()
+  panel:evaluateJavaScript("CS.focus()")
+  outsideTap:start()
 end
 
 hs.hotkey.bind(HOTKEY_MODS, HOTKEY_KEY, M.toggle)
