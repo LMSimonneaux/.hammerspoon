@@ -1,0 +1,10 @@
+# ~/.zshrc.local — secrets & réglages propres à la machine.
+# NON versionné (dans .gitignore). Copier en ~/.zshrc.local et remplir.
+#
+#   cp dotfiles/zshrc.local.example ~/.zshrc.local
+#
+# Puis mettre les vraies valeurs ci-dessous.
+
+# Token GitHub pour npm / GitHub Packages (registry npm authentifié).
+# Générer un PAT sur https://github.com/settings/tokens (scope: read:packages).
+# export NODE_AUTH_TOKEN="<colle-ton-PAT-github-ici>"

@@ -7,6 +7,11 @@ setup.log
 
 # Backups horodatés
 *.bak.*
+*.backup.*
+
+# Secrets locaux (dotfiles) — jamais versionnés, seul le .example l'est
+.zshrc.local
+zshrc.local
 
 # macOS
 .DS_Store
