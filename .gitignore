@@ -13,5 +13,8 @@ setup.log
 .zshrc.local
 zshrc.local
 
+# Setup perso du matin (positionnement écran/apps) — spécifique à la machine de LM
+morning-setup.lua
+
 # macOS
 .DS_Store
