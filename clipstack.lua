@@ -244,7 +244,7 @@ local function onPasteboardChange()
       logMsg("saveToFile échoué: " .. fname)
       return
     end
-    addItem({ kind = "image", file = fname, key = imageKey(fpath), preview = "🖼️ image" })
+    addItem({ kind = "image", file = fname, key = imageKey(fpath), preview = "Image" })
   end
   -- Ni texte ni image (ex. fichiers Finder) : ignoré (hors scope).
 end
