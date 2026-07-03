@@ -60,12 +60,13 @@ local function fnv1a(s)
   return string.format("%08x", hash)
 end
 
--- Aperçu affichable : 1re ligne, espaces normalisés, tronquée.
+-- Aperçu affichable : 1re ligne NON VIDE, espaces normalisés, tronquée.
 local function previewOf(text)
-  local first = text:match("^[^\n]*") or text
-  first = first:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+  local stripped = text:gsub("^%s+", "")           -- ignore les blancs/retours de tête
+  local first = stripped:match("^[^\n]*") or stripped -- 1re ligne réelle (plus la ligne vide)
+  first = first:gsub("%s+", " "):gsub("%s+$", "")
   if #first > PREVIEW_LEN then first = first:sub(1, PREVIEW_LEN) .. "…" end
-  if first == "" then first = "(espaces)" end
+  if first == "" then first = "(espaces)" end        -- ne reste que pour un contenu 100% blanc
   return first
 end
 
