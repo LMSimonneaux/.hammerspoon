@@ -53,7 +53,12 @@ clone_plugin https://github.com/zsh-users/zsh-autosuggestions "zsh-autosuggestio
 clone_plugin https://github.com/zsh-users/zsh-syntax-highlighting "zsh-syntax-highlighting"
 
 echo "== 3. Liens symboliques =="
-link "$DOTFILES/zshrc" "$HOME/.zshrc"
+# Le zshrc n'est plus versionné : on ne le lie que s'il est présent localement.
+if [ -f "$DOTFILES/zshrc" ]; then
+  link "$DOTFILES/zshrc" "$HOME/.zshrc"
+else
+  echo "  (pas de zshrc dans le repo — on garde le ~/.zshrc existant)"
+fi
 mkdir -p "$ZSH_CUSTOM"
 link "$DOTFILES/omz-custom/zsh-highlight-colors.zsh" "$ZSH_CUSTOM/zsh-highlight-colors.zsh"
 

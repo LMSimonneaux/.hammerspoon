@@ -18,3 +18,4 @@ morning-setup.lua
 
 # macOS
 .DS_Store
+dotfiles/zshrc
