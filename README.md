@@ -54,5 +54,3 @@ git clone https://github.com/LMSimonneaux/.hammerspoon.git ~/.hammerspoon
 # 3. Dotfiles (zsh, iTerm2) — sauvegarde l'existant, n'écrase rien
 ~/.hammerspoon/dotfiles/install.sh
 ```
-
-Aucun secret n'est versionné : ils vivent dans `~/.zshrc.local` (gitignoré, template fourni).
